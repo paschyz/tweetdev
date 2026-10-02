@@ -85,16 +85,22 @@ export class StartService {
         }
 
         const hubs = [
-            { name: "python", description: "Everything Python", admins: ["alice"] },
-            { name: "javascript", description: "JS, TS and Node", admins: ["bob"] }
+            {
+                name: "python", description: "Everything Python", admins: ["alice"],
+                profileImageUrl: "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg",
+                coverImageUrl: "https://images.unsplash.com/photo-1526379095098-d400fd0bf935?w=1200&h=400&fit=crop"
+            },
+            {
+                name: "javascript", description: "JS, TS and Node", admins: ["bob"],
+                profileImageUrl: "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg",
+                coverImageUrl: "https://images.unsplash.com/photo-1579468118864-1b9ea3c0db4a?w=1200&h=400&fit=crop"
+            }
         ]
         for (const hub of hubs) {
             if (await HubModel.exists({ name: hub.name })) continue
             await HubModel.create({
                 ...hub,
                 users: usernames,
-                profileImageUrl: `https://picsum.photos/seed/${hub.name}/200/200`,
-                coverImageUrl: `https://picsum.photos/seed/${hub.name}-cover/1200/400`,
                 creationDate: new Date()
             })
         }
