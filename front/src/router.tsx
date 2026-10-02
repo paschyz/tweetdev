@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import App from "./App";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -9,9 +9,8 @@ import CreatePost from "./pages/CreatePost";
 import Hub from "./pages/Hub";
 import DetailsPost from "./pages/DetailsPost";
 import Workflow from "./pages/Workflow";
-import DetailsCode from "./pages/DetailsCode";
-import CreateCode from "./pages/CreateCode";
-import DetailsWorkflow from "./pages/DetailsWorkflow";
+import Program from "./pages/Program";
+
 export default createBrowserRouter([
   {
     path: "/",
@@ -20,6 +19,10 @@ export default createBrowserRouter([
       {
         path: "/",
         element: <Feed />,
+      },
+      {
+        path: "/feed",
+        element: <Navigate to="/" replace />,
       },
       {
         path: "/login",
@@ -42,10 +45,6 @@ export default createBrowserRouter([
         element: <Profile />,
       },
       {
-        path: "/feed",
-        element: <Feed />,
-      },
-      {
         path: "/create-post",
         element: <CreatePost />,
       },
@@ -57,28 +56,27 @@ export default createBrowserRouter([
         path: "/post/:id",
         element: <DetailsPost />,
       },
+      // the keys make "new" and "existing" separate instances: going from one to the other starts clean
       {
         path: "/workflow",
-        element: <Workflow />,
+        element: <Workflow key="all" />,
       },
       {
         path: "/workflow/:id",
-        element: <DetailsWorkflow />,
+        element: <Workflow key="one" />,
       },
       {
         path: "/program",
-        element: <CreateCode />,
+        element: <Program key="new" />,
       },
-
       {
         path: "/program/:id",
-        element: <DetailsCode />,
+        element: <Program key="existing" />,
       },
-
-      // {
-      //   path: "/header",
-      //   element: <Header />
-      // }
+      {
+        path: "*",
+        element: <Navigate to="/" replace />,
+      },
     ],
   },
 ]);

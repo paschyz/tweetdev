@@ -1,31 +1,66 @@
+import animate from "tailwindcss-animate";
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  darkMode: 'class',
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  darkMode: "class",
+  // hover styles only where a real pointer can hover (no sticky hover on touch)
+  future: { hoverOnlyWhenSupported: true },
   theme: {
     extend: {
-      colors: {
-        accentColor:'#355cc9',
-        accentColorHover:'#2a4eaa',
-        fontColor:"#FFFFFF",
-        secondaryColor:"#C7C9CE",
-        componentBorder: '#222936',
-        componentBg:"#1c212e",
-        componentBgHover:"#1e2532",
-        searchBorder:'#1C222D',
-        headerBorder:'#17191C',
-        headerBg:'#06070B',
-        bodyBg :'#131720'
+      fontFamily: {
+        sans: ['"Schibsted Grotesk"', "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "monospace"],
       },
-      backgroundImage: {
-        'spidercat': "url('src/assets/spidercat.png')",
-      }
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+        info: "hsl(var(--info))",
+        success: "hsl(var(--success))",
+      },
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+      // the built-in curves are too weak: `ease-out` / `ease-in-out` get the strong variants
+      transitionTimingFunction: {
+        out: "cubic-bezier(0.23, 1, 0.32, 1)",
+        "in-out": "cubic-bezier(0.77, 0, 0.175, 1)",
+        drawer: "cubic-bezier(0.32, 0.72, 0, 1)",
+      },
     },
   },
-  plugins: [require('tailwind-scrollbar'),require('daisyui')],
-  
-}
-
+  plugins: [animate],
+};

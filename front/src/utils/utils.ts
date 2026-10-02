@@ -31,8 +31,14 @@ export const convertTimestampToMonthYear =(timestamp: string): string =>{
     }
   };
   
-  export const navigateTo = (location: string) => {
-    window.location.href = location;
+  /** What is wrong with a password, or "" when it is fine. */
+  export const passwordProblem = (password: string): string => {
+    if (password.length < 8) return "Use at least 8 characters.";
+    if (/\s/.test(password)) return "Passwords can't contain spaces.";
+    if (!/^[a-zA-Z0-9!@#$%^&*()_+{}\[\]:;<>,.?~\\-]+$/.test(password)) {
+      return "Use only letters, numbers and common symbols.";
+    }
+    return "";
   };
 
   export const navigateToNewWindow = (location: string) => {

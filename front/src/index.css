@@ -1,32 +1,165 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-:root {
-  /* font-family: Arial, Helvetica, sans-serif,"Be Vietnam Pro", system-ui, Avenir, Helvetica, Arial, sans-serif; */
-  line-height: 1.5;
-  font-weight: 400;
-  font-size: large;
-  max-width: 100vw;
 
-  color-scheme: light dark;
-  color: var(--font-color);
-  background-color: #131720;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-*{
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  color: var(--font-color);
+@layer base {
+  /* Ink navy + the yellow Python and JavaScript share. Dark only. */
+  :root {
+    color-scheme: dark;
+    --background: 226 38% 9%;
+    --foreground: 220 30% 94%;
+    --card: 226 32% 12%;
+    --card-foreground: 220 30% 94%;
+    --popover: 226 32% 13%;
+    --popover-foreground: 220 30% 94%;
+    --primary: 47 100% 62%;
+    --primary-foreground: 226 45% 10%;
+    --secondary: 226 26% 18%;
+    --secondary-foreground: 220 30% 94%;
+    --muted: 226 26% 15%;
+    --muted-foreground: 223 16% 66%;
+    --accent: 226 26% 17%;
+    --accent-foreground: 220 30% 94%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 226 22% 19%;
+    --input: 226 22% 25%;
+    --ring: 47 100% 62%;
+    --info: 212 78% 70%;
+    --success: 152 58% 56%;
+    --well: 226 40% 7%;
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+  }
 }
 
-img,svg{
-  display: inline;
+@layer utilities {
+  .bg-well {
+    background-color: hsl(var(--well));
+  }
+
+  .cursor-blink {
+    animation: cursor-blink 1.1s steps(2, start) infinite;
+  }
 }
 
-.border{
-  border: 1px solid black !important;
+@keyframes cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Markdown (posts, comments, code previews) rendered by @uiw/react-md-editor */
+html[data-color-mode="dark"] .wmde-markdown {
+  --color-canvas-default: transparent;
+  --color-canvas-subtle: hsl(var(--well));
+  --color-border-default: hsl(var(--border));
+  --color-border-muted: hsl(var(--border));
+  --color-fg-default: hsl(var(--foreground));
+  --color-fg-muted: hsl(var(--muted-foreground));
+  --color-accent-fg: hsl(var(--info));
+  --color-neutral-muted: hsl(var(--secondary));
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+html[data-color-mode="dark"] .wmde-markdown pre {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+}
+
+html[data-color-mode="dark"] .wmde-markdown code,
+html[data-color-mode="dark"] .wmde-markdown pre {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+
+html[data-color-mode="dark"] .wmde-markdown img {
+  background: transparent;
+}
+
+/* Markdown editor on the new post page */
+html[data-color-mode="dark"] .w-md-editor {
+  --color-canvas-default: hsl(var(--card));
+  --color-border-default: hsl(var(--border));
+  --md-editor-box-shadow-color: hsl(var(--border));
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* React Flow canvas */
+.flow .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: hsl(var(--background));
+  border: 2px solid hsl(var(--primary));
+}
+
+.flow .react-flow__edge-path {
+  stroke: hsl(var(--muted-foreground));
+  stroke-width: 1.5;
+}
+
+.flow .react-flow__edge.selected .react-flow__edge-path {
+  stroke: hsl(var(--primary));
+}
+
+.flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  box-shadow: none;
+}
+
+.flow .react-flow__controls-button {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+  fill: hsl(var(--foreground));
+}
+
+.flow .react-flow__controls-button:hover {
+  background: hsl(var(--accent));
+}
+
+.flow .react-flow__minimap {
+  overflow: hidden;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.flow .react-flow__attribution {
+  background: transparent;
+}
+
+.flow .react-flow__attribution a {
+  color: hsl(var(--muted-foreground));
+}
+
+/* Fewer and gentler: keep state changes, drop the movement */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,310 +1,254 @@
-import React, { useEffect, useState } from "react";
-import {
-  deleteSelf,
-  fetchSelfInfo,
-  fetchUserInfoByUsername,
-} from "../api/user";
-import {
-  getLocalStorageItemByName,
-  getSession,
-} from "../services/sessionService";
-import { convertTimestampToMonthYear, defaultUser } from "../utils/utils";
-import "../styles/Profile.css";
+import { useEffect, useState } from "react";
+import { Navigate, useParams } from "react-router-dom";
+import { CalendarDays, KeyRound, MoreHorizontal, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { fetchProfilePosts } from "../api/post";
-import { IPost } from "../interfaces";
-import { useParams } from "react-router-dom";
-import Favorites from "../components/Favorites";
-import {
-  Clock,
-  PencilSimple,
-  DotsThreeVertical,
-  InstagramLogo,
-  YoutubeLogo,
-  XLogo,
-  TwitterLogo,
-  TwitchLogo,
-  DiscordLogo,
-  GithubLogo,
-  PatreonLogo,
-} from "@phosphor-icons/react";
-import EditButton from "../components/buttons/EditButton";
-import ModalFollowers from "../components/ModalFollowers";
+import { fetchGetUserPrograms } from "../api/programs";
+import { deleteSelf, fetchUserInfoByUsername } from "../api/user";
+import { fetchGetUserWorkflows } from "../api/workflow";
+import { ConfirmDialog } from "../components/DeleteMenu";
+import EditPasswordDialog from "../components/EditPasswordDialog";
+import EditProfileDialog from "../components/EditProfileDialog";
+import { EmptyState, FeedSkeleton } from "../components/FeedItem";
+import FollowButton from "../components/FollowButton";
+import FollowsDialog from "../components/FollowsDialog";
+import { UserAvatar } from "../components/Identity";
 import Post from "../components/Post";
-import EditProfileButton from "../components/buttons/EditProfileButton";
-import EditHubButton from "../components/buttons/EditHubButton";
-import { Trash2 } from "lucide-react";
-import toast from "react-hot-toast";
-import { useAuth } from "../provider/AuthProvider";
-import ReadFollowsButton from "../components/buttons/ReadFollowsButton";
-import EditPasswordButton from "../components/buttons/EditPasswordButton";
+import Program from "../components/Program";
+import TimelineLayout, { PageHeader } from "../components/TimelineLayout";
 import Workflow from "../components/Workflow";
-import { fetchGetUserPrograms, fetchPrograms } from "../api/programs";
-import { fetchGetUserWorkflows, fetchWorkflows } from "../api/workflow";
-import Program from "../components/program/Program";
-import FollowButton from "../components/buttons/FollowButton";
+import { Button } from "../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { Skeleton } from "../components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { me, useRefreshKey } from "../lib/lookups";
+import { Items, without } from "../lib/utils";
+import { useAuth } from "../provider/AuthProvider";
+import { getSession } from "../services/sessionService";
+import { convertTimestampToMonthYear } from "../utils/utils";
 
 function Profile() {
-  const [userInfo, setUserInfo] = useState<UserResponse>(defaultUser);
-  const [posts, setPosts] = useState<IPost[]>([]);
-  const [programs, setPrograms] = useState([]);
-  const [workflows, setWorkflows] = useState([]);
-  const [selectedMode, setSelectedMode] = useState("posts"); // Default mode
-  const [followersCount, setFollowersCount] = useState(0);
-  const [followingCount, setFollowingCount] = useState(0);
-  const [followersText, setFollowersText] = useState("Follower");
+  const { username } = useParams();
+  const self = me();
+  const isSelf = username === self;
+  const refreshKey = useRefreshKey();
   const { logoutAndClearToken } = useAuth();
-  const sessionToken = getSession();
-  const [notFoundUser, setNotFoundUser] = useState("");
-  let { username } = useParams();
-  const [sessionUsername, setSessionUsername] = useState("");
 
-  const deleteUser = () => {
+  const [user, setUser] = useState<UserResponse | null | undefined>(undefined); // null: not found
+  const [followers, setFollowers] = useState(0);
+  const [posts, setPosts] = useState<Items>(null);
+  const [programs, setPrograms] = useState<Items>(null);
+  const [workflows, setWorkflows] = useState<Items>(null);
+  const [dialog, setDialog] = useState<"edit" | "password" | "delete" | null>(null);
+  const [followsTab, setFollowsTab] = useState<"following" | "followers" | null>(null);
+
+  // another profile: back to loading. A refresh (follow, edit) updates in place instead.
+  useEffect(() => {
+    setUser(undefined);
+    setPosts(null);
+    setPrograms(null);
+    setWorkflows(null);
+  }, [username]);
+
+  useEffect(() => {
+    if (!username) return;
+    const token = getSession();
+    fetchUserInfoByUsername(token, username)
+      .then((found) => {
+        setUser(found);
+        setFollowers(found.followers.length);
+      })
+      .catch(() => setUser(null));
+    fetchProfilePosts(token, username)
+      .then((list) => setPosts([...list].reverse())) // API returns oldest first
+      .catch(() => setPosts([]));
+    fetchGetUserPrograms(token, username).then(setPrograms).catch(() => setPrograms([]));
+    fetchGetUserWorkflows(token, username).then(setWorkflows).catch(() => setWorkflows([]));
+  }, [username, refreshKey]);
+
+  if (!username) return <Navigate to={"/profile/" + encodeURIComponent(self)} replace />;
+
+  const deleteAccount = async () => {
     try {
-      deleteSelf(sessionToken);
-      toast.success("Deleted User !");
+      await deleteSelf(getSession());
+      toast.success("Account deleted");
       logoutAndClearToken();
-      window.location.href = "/login";
-    } catch (error) {
-      toast.error("Error Deleting User");
+    } catch {
+      toast.error("Couldn't delete your account. Try again.");
     }
   };
 
-  useEffect(() => {
-    const getSessionUsername = getLocalStorageItemByName("username");
-    setSessionUsername(getSessionUsername);
-    const fetchData = async () => {
-      try {
-        if (sessionToken) {
-          if (username == undefined) {
-            const selfInfoData = await fetchSelfInfo(sessionToken);
-            setUserInfo(selfInfoData);
-            setFollowersCount(selfInfoData.followers.length);
-            setFollowingCount(selfInfoData.following.length);
-            const selfPostsData = await fetchProfilePosts(sessionToken);
-            setPosts(selfPostsData);
-          } else {
-            try {
-              const userInfoData = await fetchUserInfoByUsername(
-                sessionToken,
-                username
-              );
-              setUserInfo(userInfoData);
-              setFollowersCount(userInfoData.followers.length);
-              setFollowingCount(userInfoData.following.length);
-              const selfPostsData = await fetchProfilePosts(
-                sessionToken,
-                userInfoData.username
-              );
-              setPosts(selfPostsData);
-            } catch (error) {
-              setNotFoundUser("This account doesn’t exist");
-              console.error("Error fetching user info:", error);
-            }
-          }
-        } else {
-          console.error("Token de session null.");
-        }
-      } catch (error) {
-        console.error("Error fetching user info:", error);
-      }
-    };
-    fetchData();
-  }, [sessionToken, username]);
-
-  useEffect(() => {
-    setFollowersText(followersCount > 1 ? "Followers" : "Follower");
-  }, [followersCount]);
-
-  useEffect(() => {
-    const fetchContent = async () => {
-      try {
-        if (sessionToken) {
-          const selfPostsData = await fetchProfilePosts(sessionToken, username);
-          setPosts(selfPostsData);
-          const programsData = await fetchGetUserPrograms(
-            sessionToken,
-            username
-          );
-          setPrograms(programsData);
-          const workflowsData = await fetchGetUserWorkflows(
-            sessionToken,
-            username
-          );
-          setWorkflows(workflowsData);
-        }
-      } catch (error) {
-        console.error(`Error fetching ${selectedMode}:`, error);
-      }
-    };
-    fetchContent();
-  }, [selectedMode, sessionToken, username]);
-
-  const incrementFollowers = () => {
-    setFollowersCount((prevCounter) => prevCounter + 1);
-  };
-
-  const decrementFollowers = () => {
-    setFollowersCount((prevCounter) => prevCounter - 1);
-  };
-
-  const renderButton = () => {
-    if (username) {
-      return username === sessionUsername ? (
-        <>
-          {userInfo.username !== "" && <EditProfileButton />}
-          <EditPasswordButton />
-          <div className="flex items-center cursor-pointer relative group">
-            <div className="absolute bg-white z-10 top-10 right-0 hidden group-hover:block">
-              <button
-                className="font-medium bg-red-100 text-nowrap rounded-lg p-2 flex items-center gap-2 hover:bg-red-200 text-sm mt-1"
-                onClick={() => deleteUser()}
-              >
-                <Trash2 size={20} weight="bold" color="#b91c1c" />
-                <span className="text-red-700">Delete Profile</span>
-              </button>
-            </div>
-            <DotsThreeVertical size={30} weight="bold" />
-          </div>
-        </>
-      ) : (
-        <FollowButton
-          increment={incrementFollowers}
-          decrement={decrementFollowers}
-          username={username}
-        />
-      );
-    }
-    return (
-      <>
-        {userInfo && <EditProfileButton />}
-        <div className="flex items-center cursor-pointer relative group">
-          <div className="absolute bg-white z-10 top-10 right-0 hidden group-hover:block">
-            <button
-              className="font-medium bg-red-100 text-nowrap rounded-lg p-2 flex items-center gap-2 hover:bg-red-200 text-sm mt-1"
-              onClick={() => deleteUser()}
-            >
-              <Trash2 size={20} weight="bold" color="#b91c1c" />
-              <span className="text-red-700">Delete Profile</span>
-            </button>
-          </div>
-          <DotsThreeVertical size={30} weight="bold" />
-        </div>
-      </>
-    );
-  };
+  const stat = "rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const nothing = isSelf ? "You haven't" : `${username} hasn't`;
 
   return (
-    <div className="profile-container grid grid-cols-[1fr_3.5fr] gap-4 p-12 mt-6">
-      {!userInfo && <>Loading...</>}
+    <TimelineLayout>
+      <PageHeader title={username} back />
 
-      {userInfo && (
+      {user === null && (
+        <EmptyState title="This account doesn't exist">
+          Check the spelling, or it may have been deleted.
+        </EmptyState>
+      )}
+
+      {user === undefined && (
+        <div className="border-b pb-5">
+          <Skeleton className="h-36 rounded-none sm:h-48" />
+          <div className="space-y-3 px-5 pt-16">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+        </div>
+      )}
+
+      {user && (
         <>
-          <div className="hidden lg:block">
-            <Favorites />
-          </div>
-          <div className="profile-card border-2 border-componentBorder rounded-xl grid grid-rows-[60fr_25fr_15fr] h-[600px] mr-6 col-span-2 lg:col-span-1">
+          <section className="border-b">
             <div
-              className="border-b-2 border-componentBorder rounded-t-xl"
-              style={{
-                backgroundImage: `url(${userInfo.backgroundImageUrl})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              }}
-            ></div>
-            <div className="border-b-2 bg-componentBg border-componentBorder grid grid-cols-[15fr_67fr_18fr]">
-              <div className="flex justify-center">
-                <div
-                  className="h-[180px] w-[180px] border-4 border-cyan-400 rounded-full mt-[-60px] ml-6 mr-2"
-                  style={{
-                    backgroundImage: `url(${userInfo.profileImageUrl})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }}
-                ></div>
-              </div>
-              <div className="flex flex-col gap-3 p-4">
-                <p className="text-xl font-semibold">{userInfo.username}</p>
-                <ReadFollowsButton
-                  followingCount={followingCount}
-                  followersCount={followersCount}
-                  followersText={followersText}
-                  username={username}
+              className="h-36 bg-secondary bg-cover bg-center sm:h-48"
+              style={
+                user.backgroundImageUrl
+                  ? { backgroundImage: `url("${user.backgroundImageUrl}")` }
+                  : undefined
+              }
+            />
+            <div className="px-4 pb-5 sm:px-5">
+              <div className="flex items-end justify-between gap-3">
+                <UserAvatar
+                  name={user.username}
+                  src={user.profileImageUrl ?? ""}
+                  className="-mt-12 h-24 w-24 border-4 border-background sm:-mt-14 sm:h-28 sm:w-28 [&>span]:text-2xl"
                 />
-                <p className="text-secondaryColor text-xs font-medium">
-                  <Clock color="#C7C9CE" weight="bold" size={22} /> Member Since{" "}
-                  {convertTimestampToMonthYear(userInfo.joinDate)}
-                </p>
+                <div className="flex items-center gap-2 pb-1">
+                  {isSelf ? (
+                    <>
+                      <Button variant="outline" onClick={() => setDialog("edit")}>
+                        Edit profile
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="icon" aria-label="Account settings">
+                            <MoreHorizontal />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => setDialog("password")}>
+                            <KeyRound />
+                            Change password
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-red-400 focus:text-red-400"
+                            onSelect={() => setDialog("delete")}
+                          >
+                            <Trash2 />
+                            Delete account
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  ) : (
+                    <FollowButton
+                      kind="user"
+                      name={user.username}
+                      onChange={(delta) => setFollowers((count) => count + delta)}
+                    />
+                  )}
+                </div>
               </div>
-              <div className="grid grid-rows-[40fr_50fr]">
-                <div className="flex gap-3 p-2">{renderButton()}</div>
-              </div>
-            </div>
-            <div className="p-6 bg-componentBg grid grid-cols-[68fr_32fr] gap-5">
-              <div className="text-secondaryColor text-sm font-medium">
-                {userInfo.description}
-                {notFoundUser}
-              </div>
-              <div className="flex justify-around items-center">
-                <InstagramLogo size={24} weight="fill" />
-                <YoutubeLogo size={24} weight="fill" />
-                <XLogo size={24} weight="fill" />
-                <TwitchLogo size={24} weight="fill" />
-                <GithubLogo size={24} weight="fill" />
-              </div>
-            </div>
-          </div>
 
-          <div className="col-span-2 lg:col-start-2 -mt-20">
-            <div className="flex gap-4 mb-4   flex-row font-medium">
-              <button
-                className={`py-2 px-4 rounded-md ${
-                  selectedMode === "posts"
-                    ? "bg-accentColor text-white"
-                    : "bg-gray-200 text-gray-800"
-                } hover:bg-accentColorHover`}
-                onClick={() => setSelectedMode("posts")}
-              >
-                Posts
-              </button>
-              <button
-                className={`py-2 px-4 rounded-md ${
-                  selectedMode === "programs"
-                    ? "bg-accentColor text-white"
-                    : "bg-gray-200 text-gray-800"
-                } hover:bg-accentColorHover`}
-                onClick={() => setSelectedMode("programs")}
-              >
-                Programs
-              </button>
-              <button
-                className={`py-2 px-4 rounded-md ${
-                  selectedMode === "workflows"
-                    ? "bg-accentColor text-white"
-                    : "bg-gray-200 text-gray-800"
-                } hover:bg-accentColorHover`}
-                onClick={() => setSelectedMode("workflows")}
-              >
-                Workflows
-              </button>
+              <h2 className="mt-3 text-2xl font-bold tracking-tight">{user.username}</h2>
+              {user.description && (
+                <p className="mt-2 max-w-prose whitespace-pre-wrap text-[15px] leading-relaxed">
+                  {user.description}
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground">
+                <button type="button" className={stat} onClick={() => setFollowsTab("following")}>
+                  <span className="font-semibold text-foreground">{user.following.length}</span>{" "}
+                  Following
+                </button>
+                <button type="button" className={stat} onClick={() => setFollowsTab("followers")}>
+                  <span className="font-semibold text-foreground">{followers}</span>{" "}
+                  {followers === 1 ? "Follower" : "Followers"}
+                </button>
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="h-4 w-4" />
+                  Joined {convertTimestampToMonthYear(user.joinDate)}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col gap-4">
-              {selectedMode === "posts" &&
-                posts
-                  .reverse()
-                  .map((post, index) => <Post postInfo={post} key={index} />)}
-              {selectedMode === "programs" &&
-                programs.map((program, index) => (
-                  <Program programInfo={program} key={index} />
-                ))}
-              {selectedMode === "workflows" &&
-                workflows.map((workflow, index) => (
-                  <Workflow programInfo={workflow} key={index} />
-                ))}
-            </div>
-          </div>
+          </section>
+
+          <Tabs defaultValue="posts">
+            <TabsList>
+              <TabsTrigger value="posts">Posts</TabsTrigger>
+              <TabsTrigger value="programs">Programs</TabsTrigger>
+              <TabsTrigger value="workflows">Workflows</TabsTrigger>
+            </TabsList>
+            <TabsContent value="posts">
+              {!posts && <FeedSkeleton />}
+              {posts?.length === 0 && <EmptyState title={`${nothing} posted yet`} />}
+              {posts?.map((post) => (
+                <Post
+                  key={post._id}
+                  postInfo={post}
+                  to={"/post/" + post._id}
+                  onDeleted={without(setPosts)}
+                />
+              ))}
+            </TabsContent>
+            <TabsContent value="programs">
+              {!programs && <FeedSkeleton />}
+              {programs?.length === 0 && (
+                <EmptyState title={`${nothing} shared a program yet`} />
+              )}
+              {programs?.map((program) => (
+                <Program key={program._id} programInfo={program} onDeleted={without(setPrograms)} />
+              ))}
+            </TabsContent>
+            <TabsContent value="workflows">
+              {!workflows && <FeedSkeleton />}
+              {workflows?.length === 0 && (
+                <EmptyState title={`${nothing} built a workflow yet`} />
+              )}
+              {workflows?.map((workflow) => (
+                <Workflow
+                  key={workflow._id}
+                  programInfo={workflow}
+                  onDeleted={without(setWorkflows)}
+                />
+              ))}
+            </TabsContent>
+          </Tabs>
+
+          <FollowsDialog username={user.username} tab={followsTab} onTabChange={setFollowsTab} />
+          <EditProfileDialog
+            user={user}
+            open={dialog === "edit"}
+            onOpenChange={(open) => setDialog(open ? "edit" : null)}
+          />
+          <EditPasswordDialog
+            open={dialog === "password"}
+            onOpenChange={(open) => setDialog(open ? "password" : null)}
+          />
+          <ConfirmDialog
+            open={dialog === "delete"}
+            onOpenChange={(open) => setDialog(open ? "delete" : null)}
+            title="Delete your account?"
+            description="Your profile is removed and you are logged out. This can't be undone."
+            confirmLabel="Delete account"
+            onConfirm={deleteAccount}
+          />
         </>
       )}
-    </div>
+    </TimelineLayout>
   );
 }
 

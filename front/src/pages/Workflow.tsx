@@ -1,606 +1,610 @@
-import React, { useRef, useCallback, useState, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import ReactFlow, {
-  ReactFlowProvider,
   addEdge,
-  useNodesState,
-  useEdgesState,
-  Controls,
-  useReactFlow,
-  MiniMap,
   Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
   Panel,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { Play, Save, Trash2 } from "lucide-react";
-import WorkflowSideBar from "../components/workflow/WorkflowSideBar";
-import CodeNode from "../components/workflow/CodeNode";
-import toast from "react-hot-toast";
-import CustomButton from "../components/buttons/CustomButton";
-import RunNode from "../components/workflow/RunNode";
-import FinishNode from "../components/workflow/FinishNode";
-import EditWorkflowButton from "../components/buttons/EditWorkflowButton";
-import UploadNode from "../components/workflow/UploadNode";
-import FileNode from "../components/workflow/FileNode";
 import {
-  getLocalStorageItemByName,
-  getSession,
-} from "../services/sessionService";
+  Copy,
+  Download,
+  GitBranchPlus,
+  Loader2,
+  MoreHorizontal,
+  Play,
+  Plus,
+  Save,
+  Shapes,
+  Trash2,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { executePipeline } from "../api/programs";
 import {
   cloningWorkflow,
   createWorkflow,
   deleteWorkflow,
   deleteWorkflowVersionByIdandName,
+  fetchWorkflowById,
   fetchWorkflows,
+  getIsWorkflowDeletable,
   updateWorkflow,
   updateWorkflowName,
   upgradeWorkflow,
 } from "../api/workflow";
-import { executePipeline, executeProgram } from "../api/programs";
-const initialNodes = [];
+import { ConfirmDialog } from "../components/DeleteMenu";
+import { EmptyState } from "../components/FeedItem";
+import { Button } from "../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "../components/ui/sheet";
+import { nodeTypes } from "../components/workflow/nodes";
+import WorkflowSideBar from "../components/workflow/WorkflowSideBar";
+import { getSession } from "../services/sessionService";
 
-const nodeTypes = {
-  "code-node": CodeNode,
-  "run-node": RunNode,
-  "finish-node": FinishNode,
-  "upload-node": UploadNode,
-  "file-node": FileNode,
-};
+// saved flows keep their node ids: a plain counter would collide with them after a reload
+let created = 0;
+const getId = () => `dndnode_${Date.now()}_${created++}`;
 
-let id = 0;
-const getId = () => `dndnode_${id++}`;
+type StepResult = { label: string; text?: string; fileUrl?: string; fileName?: string; error?: string };
 
-const DnDFlow = () => {
-  const [selectedVersion, setSelectedVersion] = useState("");
-  const [versions, setVersions] = useState([]);
-
-  const [workflowResults, setWorkflowResults] = useState([]); 
-
-
-  const reactFlowWrapper = useRef(null);
+/** /workflow lists every workflow; /workflow/:id opens that one. */
+const WorkflowEditor = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const canvas = useRef<HTMLDivElement>(null);
+  const { screenToFlowPosition, toObject, fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const { screenToFlowPosition } = useReactFlow();
-  const [rfInstance, setRfInstance] = useState<typeof ReactFlow | null>(null);
-  const [selectedWorkflow, setSelectedWorkflow] = useState<
-    IWorkflow | undefined
-  >();
-  const username = getLocalStorageItemByName("username");
-  const [workflowName, setWorkflowName] = useState(
-    (selectedWorkflow && selectedWorkflow.name) || "Untitled Workflow"
-  );
-  const [selectedKey, setSelectedKey] = useState(0);
 
+  const [status, setStatus] = useState<"loading" | "ready" | "missing">("loading");
   const [workflows, setWorkflows] = useState<any[]>([]);
-  const handleChange = (e) => {
-    setWorkflowName(e.target.value);
-  };
-  var isAnyWorkflow = workflows.length > 0 ? true : false;
+  const [selected, setSelected] = useState<any>(null);
+  const [canEdit, setCanEdit] = useState(false);
+  const [name, setName] = useState("");
+  const [version, setVersion] = useState("");
+  const [results, setResults] = useState<StepResult[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [confirming, setConfirming] = useState<"workflow" | "version" | null>(null);
+  const [stepsOpen, setStepsOpen] = useState(false);
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      const updatedWorkflows = workflows.map((workflow, index) => {
-        if (index === selectedKey) {
-          return { ...workflow, name: workflowName };
+  const versions: any[] = selected?.versions ?? [];
+
+  /** Puts a workflow on the canvas: the given version, or its latest. */
+  const show = (workflow: any, versionName?: string) => {
+    const all: any[] = workflow.versions ?? [];
+    const shown = all.find((v) => v.name === versionName) ?? all[all.length - 1];
+    setSelected(workflow);
+    setName(workflow.name);
+    setVersion(shown?.name ?? "");
+    setNodes(shown?.content?.nodes ?? []);
+    setEdges(shown?.content?.edges ?? []);
+    setResults(null);
+    // wait for the new nodes to be measured
+    setTimeout(() => fitView({ padding: 0.3, maxZoom: 1 }), 50);
+  };
+
+  /** (Re)loads from the API and shows `selectId`, else the first workflow. */
+  const load = async (selectId?: string) => {
+    const token = getSession();
+    try {
+      if (id) {
+        const one = await fetchWorkflowById(token, id);
+        if (!one) return setStatus("missing");
+        show(one);
+      } else {
+        const all = await fetchWorkflows(token);
+        setWorkflows(all);
+        const pick = all.find((w) => w._id === selectId) ?? all[0];
+        if (pick) show(pick);
+        else {
+          setSelected(null);
+          setNodes([]);
+          setEdges([]);
         }
-        return workflow;
-      });
-      setWorkflows(updatedWorkflows);
-      onSaveName();
+      }
+      setStatus("ready");
+    } catch {
+      setStatus(id ? "missing" : "ready");
     }
   };
 
-  const onDragOver = useCallback((event) => {
+  useEffect(() => {
+    load();
+  }, [id]);
+
+  useEffect(() => {
+    setCanEdit(false);
+    if (!selected?._id) return;
+    getIsWorkflowDeletable(getSession(), selected._id)
+      .then((can) => setCanEdit(!!can))
+      .catch(() => {});
+  }, [selected?._id]);
+
+  const addStep = useCallback(
+    (type: string, label: string, codeData?: any, at?: { x: number; y: number }) => {
+      // no drop point (added by click): centre of the canvas, nudged so steps do not stack
+      const box = canvas.current?.getBoundingClientRect();
+      const nudge = (nodes.length % 6) * 28;
+      const position = screenToFlowPosition(
+        at ?? {
+          x: (box?.left ?? 0) + (box?.width ?? 0) / 2 - 70 + nudge,
+          y: (box?.top ?? 0) + (box?.height ?? 0) / 2 - 20 + nudge,
+        }
+      );
+      setNodes((current) =>
+        current.concat({
+          id: getId(),
+          type,
+          position,
+          data: codeData ? { label, codeData } : { label },
+        })
+      );
+      setStepsOpen(false);
+    },
+    [screenToFlowPosition, nodes.length]
+  );
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
   }, []);
 
   const onDrop = useCallback(
-    (event) => {
+    (event: React.DragEvent) => {
       event.preventDefault();
-
       const type = event.dataTransfer.getData("application/reactflow");
-      const nodeName = event.dataTransfer.getData(
-        "application/reactflow/node/name"
-      );
-
-      if (typeof type === "undefined" || !type) {
-        return;
-      }
-
-      if (type === "code-node") {
-        const codeData = event.dataTransfer.getData(
-          "application/reactflow/codeData"
-        );
-
-        console.log(codeData);
-        const position = screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        const newNode = {
-          id: getId(),
-          type,
-          position,
-          data: { label: `${nodeName}`, codeData: JSON.parse(codeData) },
-        };
-        setNodes((nds) => nds.concat(newNode));
-      } else {
-        const position = screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        const newNode = {
-          id: getId(),
-          type,
-          position,
-          data: { label: `${nodeName}` },
-        };
-
-        setNodes((nds) => nds.concat(newNode));
-      }
+      if (!type) return;
+      const label = event.dataTransfer.getData("application/reactflow/node/name");
+      const codeData = event.dataTransfer.getData("application/reactflow/codeData");
+      addStep(type, label, codeData ? JSON.parse(codeData) : undefined, {
+        x: event.clientX,
+        y: event.clientY,
+      });
     },
-    [screenToFlowPosition]
+    [addStep]
   );
+
   const onConnect = useCallback(
     (params) => {
-      const { source, target } = params;
-
-      const targetHasInput = edges.some((edge) => edge.target === target);
-
-      const sourceHasOutput = edges.some((edge) => edge.source === source);
-
-      if (!targetHasInput && !sourceHasOutput) {
-        setEdges((eds) => addEdge(params, eds));
-      } else {
-        toast.error("Nodes can only have one input and one output.");
+      const targetHasInput = edges.some((edge) => edge.target === params.target);
+      const sourceHasOutput = edges.some((edge) => edge.source === params.source);
+      if (targetHasInput || sourceHasOutput) {
+        toast.error("A step can have only one input and one output.");
+        return;
       }
+      setEdges((current) => addEdge(params, current));
     },
     [edges, setEdges]
   );
 
-  const onNodesDelete = useCallback(
-    (nodesToDelete) => {
-      // Extract IDs of nodes to delete
-      const nodeIdsToDelete = nodesToDelete.map((node) => node.id);
-
-      // Filter out deleted nodes from the nodes state
-      setNodes((nds) =>
-        nds.filter((node) => !nodeIdsToDelete.includes(node.id))
-      );
-
-      // Filter out edges connected to deleted nodes
-      setEdges((eds) =>
-        eds.filter(
-          (edge) =>
-            !nodeIdsToDelete.includes(edge.source) &&
-            !nodeIdsToDelete.includes(edge.target)
-        )
-      );
-    },
-    [setNodes, setEdges]
-  );
-  const onSave = async () => {
-    if (rfInstance) {
-      const flow = rfInstance.toObject();
-      const content = { content: flow };
-      try {
-        const sessionToken = getSession();
-        const update = await updateWorkflow(
-          sessionToken,
-          selectedWorkflow?._id ?? "",
-          content
-        );
-        onSaveName();
-        toast.success("workflow updated successfully");
-        window.location.href = "";
-      } catch (error) {
-        toast.error("error while updating workflow");
-      }
-      toast.success(`${workflowName} updated successfully`);
-    }
-  };
-  const onSaveName = async () => {
-    const content = { name: workflowName };
+  const rename = async () => {
+    if (!name.trim() || name === selected.name) return;
     try {
-      const sessionToken = getSession();
-      const update = await updateWorkflowName(
-        sessionToken,
-        selectedWorkflow?._id ?? "",
-        content
-      );
-    } catch (error) {
-      toast.error("error while updating workflow");
+      await updateWorkflowName(getSession(), selected._id, { name });
+      const renamed = { ...selected, name };
+      setSelected(renamed);
+      setWorkflows((all) => all.map((w) => (w._id === renamed._id ? renamed : w)));
+      toast.success("Workflow renamed");
+    } catch {
+      toast.error("Couldn't rename the workflow. Try again.");
     }
-    toast.success(`${workflowName} updated`);
   };
 
-  const onSaveUpgrade = async () => {
-    if (rfInstance) {
-      const flow = rfInstance.toObject();
-      const content = { content: flow };
-      try {
-        const sessionToken = getSession();
-        const upgrade = await upgradeWorkflow(
-          sessionToken,
-          selectedWorkflow?._id ?? "",
-          content
-        );
-        onSaveName();
-        toast.success("workflow upgraded successfully");
-        window.location.href = "";
-      } catch (error) {
-        toast.error("error while upgrading workflow");
+  const save = async () => {
+    try {
+      await updateWorkflow(getSession(), selected._id, { content: toObject() });
+      if (name.trim() && name !== selected.name) {
+        await updateWorkflowName(getSession(), selected._id, { name });
       }
-      toast.success(`${workflowName} upgraded successfully`);
+      toast.success("Workflow saved");
+      load(selected._id);
+    } catch {
+      toast.error("Couldn't save the workflow. Try again.");
     }
   };
+
+  const saveAsNewVersion = async () => {
+    try {
+      await upgradeWorkflow(getSession(), selected._id, { content: toObject() });
+      toast.success("Saved as a new version");
+      load(selected._id);
+    } catch {
+      toast.error("Couldn't save a new version. Try again.");
+    }
+  };
+
+  /** After creating or duplicating: open the new workflow. */
+  const open = (workflow: any) => {
+    if (id) navigate(workflow?._id ? "/workflow/" + workflow._id : "/workflow");
+    else load(workflow?._id);
+  };
+
+  const createNew = async () => {
+    try {
+      open(await createWorkflow(getSession(), { name: "Untitled workflow", content: toObject() }));
+      toast.success("Workflow created");
+    } catch {
+      toast.error("Couldn't create the workflow. Try again.");
+    }
+  };
+
+  const duplicate = async () => {
+    try {
+      open(
+        await cloningWorkflow(getSession(), {
+          name: selected.name + " copy",
+          content: toObject(),
+        })
+      );
+      toast.success("Workflow duplicated");
+    } catch {
+      toast.error("Couldn't duplicate the workflow. Try again.");
+    }
+  };
+
+  const remove = async () => {
+    try {
+      await deleteWorkflow(getSession(), selected._id);
+      toast.success("Workflow deleted");
+      if (id) navigate("/workflow");
+      else load();
+    } catch {
+      toast.error("Couldn't delete the workflow. Try again.");
+    }
+  };
+
+  const removeVersion = async () => {
+    try {
+      await deleteWorkflowVersionByIdandName(getSession(), selected._id, {
+        versionName: version,
+      } as any);
+      toast.success(`Version ${version} deleted`);
+      load(selected._id);
+    } catch {
+      toast.error("Couldn't delete the version. Try again.");
+    }
+  };
+
+  /** Walks the chain from Run, executing each program and handing its file to the next step. */
   const runWorkflow = async () => {
-    const startNode = nodes.find((node) => node.type === "run-node");
-    const endNode = nodes.find((node) => node.type === "finish-node");
-    let previousFileData = null; // This will store the file for the next node if needed
-  
-    if (!startNode || !endNode) {
-      toast.error("Workflow must have a start node and finish node.");
+    const start = nodes.find((node) => node.type === "run-node");
+    if (!start || !nodes.some((node) => node.type === "finish-node")) {
+      toast.error("Add a Run step and a Finish step, then connect them.");
       return;
     }
-  
-    setWorkflowResults([]);
-    const codeNodeDetails = []; // Array to store details of code nodes
-    let currentNode = startNode;
-  
-    while (currentNode) {
-      // Check if the current node is a code-node and extract the details
 
-    // Check if the current node is an upload-node and extract the file
-    if (currentNode.type === "upload-node") {
-      const uploadedFile = currentNode.data.file; // Assuming file is saved in the data prop
+    const token = getSession();
+    const done: StepResult[] = [];
+    const visited = new Set<string>();
+    let carried: File | null = null;
+    let current = start;
+    let outcome: "finished" | "failed" | "disconnected" = "disconnected";
 
-      if (uploadedFile) {
-        previousFileData = uploadedFile; // Store the uploaded file
-        toast.success(`File from UploadNode saved: ${uploadedFile.name}`);
-        
-      } else {
-        toast.error("No file found in UploadNode.");
+    setRunning(true);
+    setResults([]);
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      const label = current.data.label;
+
+      if (current.type === "finish-node") {
+        outcome = "finished";
+        break;
       }
-    }
-      if (currentNode.type === "code-node") {
-        const { language, outputFileType } = currentNode.data.codeData;
-        const code = currentNode.data.codeData.content;
-  
-        // Prepare form data for the code-node and attach the previous file if applicable
+      if (current.type === "upload-node") {
+        if (current.data.file instanceof File) {
+          carried = current.data.file;
+          done.push({ label, text: `Passing ${carried.name} to the next step.` });
+        } else {
+          done.push({ label, error: "No file chosen. Select this step and choose one." });
+          outcome = "failed";
+        }
+      }
+      if (current.type === "code-node") {
+        const { language, outputFileType, content } = current.data.codeData ?? {};
         const formData = new FormData();
         formData.append("language", language);
-        formData.append("code", code);
+        formData.append("code", content);
         formData.append("outputFileType", outputFileType);
-  
-        // If there's a file from the previous node, pass it to the current node
-        if (previousFileData) {
-          formData.append("file", previousFileData);
-          previousFileData = null;
-        }
-  
+        if (carried) formData.append("file", carried);
+        carried = null;
+
         try {
-          const result = await executePipeline(getSession(), formData);
-  
+          const result = await executePipeline(token, formData);
           if (outputFileType === "void") {
-            setWorkflowResults((prevResults) => [
-              ...prevResults,
-              { type: 'text', content: result },
-            ]);
-            toast.success("Le code a été exécuté avec succès.");
+            done.push({ label, text: String(result ?? "") });
           } else {
-            // Convert the result into a Blob (file)
-            const url = window.URL.createObjectURL(result);
-            const contentType = result.headers ? result.headers.get('Content-Type') : 'application/octet-stream';
-          
-            // Create a Blob or File with the correct extension
-            const fileName = `output.${outputFileType}`;
-             previousFileData = new File([await result.arrayBuffer()], fileName, { type: contentType });
-  
-            // Display file output
-            setWorkflowResults((prevResults) => [
-              ...prevResults,
-              { type: 'file', content: url, outputFileType },
-            ]);
-            toast.success("File fetched and stored for next node.");
+            const fileName = "output." + outputFileType;
+            carried = new File([result], fileName, { type: result.type });
+            done.push({ label, fileName, fileUrl: URL.createObjectURL(result) });
           }
-  
-        } catch (error) {
-          toast.error("Error executing node.");
-          console.error(error);
+        } catch (error: any) {
+          const data = error?.response?.data;
+          const text = data instanceof Blob ? await data.text() : data?.message ?? data;
+          done.push({ label, error: (typeof text === "string" && text) || "This step failed to run." });
+          outcome = "failed";
         }
       }
-  
-      // Move to the next node
-      const nextEdge = edges.find((edge) => edge.source === currentNode.id);
-      if (!nextEdge) break; // If no more edges, stop the loop
-  
-      currentNode = nodes.find((node) => node.id === nextEdge.target);
-  
-      if (currentNode && currentNode.type === "finish-node") {
-        break; // Stop when we reach the finish node
-      }
+      setResults([...done]);
+      if (outcome === "failed") break;
+
+      const edge = edges.find((e) => e.source === current.id);
+      current = edge && nodes.find((node) => node.id === edge.target);
     }
-  
-    toast.success("Workflow complete.");
-  };
-  
+    setRunning(false);
 
-const downloadFile = (url, outputFileType, index) => {
-  if (url) {
-      const link = document.createElement("a");
-      link.href = url;
-      // link.download = "output." + outputType; // Dynamically set the file extension
-      console.log(link.href)
-      link.download = `output.` +outputFileType;  // Use the index to name the file
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);  // Revoke the URL after downloading
-    }
+    if (outcome === "finished") toast.success("Workflow finished");
+    else if (outcome === "failed") toast.error(`Workflow stopped at "${done[done.length - 1].label}".`);
+    else toast.error("The run never reached Finish. Connect every step in one chain.");
   };
 
+  if (status === "missing") {
+    return (
+      <EmptyState title="This workflow doesn't exist">
+        The link may be wrong, or its author deleted it.
+      </EmptyState>
+    );
+  }
 
-  const selectWorkflow = (workflow, key) => {
-    setSelectedWorkflow(workflow);
-    console.log(workflow);
-    setSelectedKey(key);
-    setWorkflowName(workflow.name);
-    restoreFlow(workflow.versions[workflow.versions.length - 1].content);
-    setSelectedVersion(workflow.versions[workflow.versions.length - 1].name);
-    setVersions(workflow.versions);
-  };
+  const sidebar = (
+    <WorkflowSideBar
+      workflows={workflows}
+      selectedId={selected?._id}
+      onSelect={(workflow) => {
+        show(workflow);
+        setStepsOpen(false);
+      }}
+      onAdd={addStep}
+    />
+  );
 
-  const selectVersion = (e, version) => {
-    setSelectedVersion(version.name);
-    console.log(version.content);
-    restoreFlow(version.content);
-  };
-
-  const restoreFlow = async (flow: any) => {
-    if (flow) {
-      setNodes(flow.nodes || []);
-      setEdges(flow.edges || []);
-    }
-  };
-  useEffect(() => {
-    const fetchWorkflow = async () => {
-      try {
-        const sessionToken = getSession();
-
-        if (sessionToken) {
-          const programsData = await fetchWorkflows(sessionToken);
-          setWorkflows(programsData);
-
-          if (programsData.length > 0) {
-            selectWorkflow(programsData[0], 0);
-          } else {
-            console.log("No workflows available");
-          }
-        } else {
-          console.error("Error fetching workflows");
-        }
-      } catch (error) {
-        console.error("Error fetching workflows:", error);
-      }
-    };
-
-    fetchWorkflow();
-  }, []);
-
-  const deleteVersion = async (versionName: any) => {
-    try {
-      const sessionToken = getSession();
-      const update = await deleteWorkflowVersionByIdandName(
-        sessionToken,
-        selectedWorkflow?._id ?? "",
-        versionName
-      );
-      toast.success("version deleted successfully");
-      window.location.href = "";
-    } catch (error) {
-      toast.error("error while updating workflow");
-    }
-  };
-
-  const deleteWorkflowByID = async () => {
-    try {
-      const sessionToken = getSession();
-      const update = await deleteWorkflow(
-        sessionToken,
-        selectedWorkflow?._id ?? ""
-      );
-      toast.success("workflow deleted successfully");
-      window.location.href = "";
-    } catch (error) {
-      toast.error("error while deleting workflow");
-    }
-  };
-
-  const createWorkflows = async () => {
-    if (rfInstance) {
-      const flow = rfInstance.toObject();
-      const content = { name: "Untitled Workflow", content: flow };
-      try {
-        const sessionToken = getSession();
-        const create = await createWorkflow(sessionToken, content);
-        toast.success("workflow created successfully");
-        window.location.href = "";
-      } catch (error) {
-        toast.error("error while creating workflow");
-      }
-    }
-  };
-
-  const cloneWorkflow = async () => {
-    if (rfInstance) {
-      const flow = rfInstance.toObject();
-      const content = { name: selectedWorkflow.name + " clone", content: flow };
-      try {
-        const sessionToken = getSession();
-        const create = await cloningWorkflow(sessionToken, content);
-        toast.success("workflow cloning successfully");
-        window.location.href = "";
-      } catch (error) {
-        toast.error("error while cloning workflow");
-      }
-    }
-  };
-  // const initializeNodes = () => {
-  //   setNodes(initialNodes);
-  // };
-  const handleKeyPress = (event) => {
-    // This will log the key pressed to the console
-    // if(event.key == "o"){
-    //   toast.success("Workflow Running...")
-    // }
-  };
   return (
-    <div tabIndex={0} onKeyDown={handleKeyPress} className="mt-20 mx-4 outline-none">
-      {isAnyWorkflow && (
-        <div className="flex mb-2 gap-2">
-          <input
-            className="font-medium rounded px-2 outline-none "
-            type="text"
-            value={workflowName}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-          />
-          <details className="dropdown ">
-            <summary className="btn px-2 min-h-0 h-6 ">
-              {selectedVersion}
-            </summary>
-            <ul className="menu dropdown-content bg-base-100 rounded-box z-[1] w-52 p-2 shadow">
-              {versions.map((version) => (
-                <li className="flex flex-row " key={version.name}>
-                  <a
-                    className="flex-1"
-                    onClick={(e) => selectVersion(e, version)}
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col lg:h-dvh">
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5 sm:px-4">
+        {selected ? (
+          <>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && rename()}
+              disabled={!canEdit}
+              aria-label="Workflow name"
+              className="h-9 w-full font-semibold disabled:opacity-100 sm:w-56"
+            />
+            <Select value={version} onValueChange={(next) => show(selected, next)}>
+              <SelectTrigger className="h-9 w-32" aria-label="Version">
+                <SelectValue placeholder="No version" />
+              </SelectTrigger>
+              <SelectContent>
+                {versions.map((v) => (
+                  <SelectItem key={v.name} value={v.name}>
+                    Version {v.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!canEdit && (
+              <p className="text-xs text-muted-foreground">by {selected.username}, read-only</p>
+            )}
+          </>
+        ) : (
+          <h1 className="text-lg font-bold">Workflows</h1>
+        )}
+
+        <div className="ml-auto flex gap-2">
+          <Button variant="outline" className="lg:hidden" onClick={() => setStepsOpen(true)}>
+            <Shapes />
+            Steps
+          </Button>
+          {selected && canEdit && (
+            <Button variant="outline" onClick={save}>
+              <Save />
+              Save
+            </Button>
+          )}
+          {selected && (
+            <Button onClick={runWorkflow} disabled={running}>
+              {running ? <Loader2 className="animate-spin [animation-duration:0.6s]" /> : <Play />}
+              Run
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="More workflow actions">
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={createNew}>
+                <Plus />
+                New workflow
+              </DropdownMenuItem>
+              {selected && (
+                <DropdownMenuItem onSelect={duplicate}>
+                  <Copy />
+                  Duplicate
+                </DropdownMenuItem>
+              )}
+              {selected && canEdit && (
+                <>
+                  <DropdownMenuItem onSelect={saveAsNewVersion}>
+                    <GitBranchPlus />
+                    Save as new version
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {versions.length > 1 && (
+                    <DropdownMenuItem
+                      className="text-red-400 focus:text-red-400"
+                      onSelect={() => setConfirming("version")}
+                    >
+                      <Trash2 />
+                      Delete version {version}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    className="text-red-400 focus:text-red-400"
+                    onSelect={() => setConfirming("workflow")}
                   >
-                    Version {version.name}
-                  </a>
-                  <div
-                    className="flex items-center justify-center"
-                    onClick={() => deleteVersion({ versionName: version.name })}
-                  >
-                    <Trash2 color="white" size={16}></Trash2>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </details>
-          <summary
-            className="btn px-2 min-h-0 h-6 "
-            onClick={() => createWorkflows()}
-          >
-            Create Workflow
-          </summary>
-      
+                    <Trash2 />
+                    Delete workflow
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      )}
-      {!isAnyWorkflow && (
-        <summary
-          className="btn mb-2 px-2 min-h-0 h-6 "
-          onClick={() => createWorkflows()}
-        >
-          Create Workflow
-        </summary>
-      )}
-      <div>
-      {workflowResults.length > 0 && (
-        <div className="flex flex-col">
-          {workflowResults.map((item, index) => (
-            item.type === 'file' ? (
-              <p
-                key={index}
-                onClick={() => downloadFile(item.content, item.outputFileType, index)}
-                style={{ textDecoration: "underline" }}
-                className="font-medium cursor-pointer text-accentColor hover:text-accentColorHover"
-              >
-                {index + 1 + ')'} Download file 
-              </p>
-            ) : (
-              <p key={index} className="font-medium">
-                {index + 1 + ')'} {item.content}
-              </p>
-            )
-          ))}
-        </div>
-      )}
-    </div>
-      <div className="flex gap-2">
-        <WorkflowSideBar
-          workflows={workflows}
-          selectedKey={selectedKey}
-          selectWorkflow={selectWorkflow}
-        />
-        <div
-          className="border-2 rounded-lg border-componentBorder bg-componentBg"
-          style={{ width: "80vw", height: "89vh" }}
-          ref={reactFlowWrapper}
-        >
+      </div>
+
+      <div className="flex min-h-0 flex-1">
+        <aside className="hidden w-72 shrink-0 overflow-y-auto border-r lg:block">{sidebar}</aside>
+
+        <div ref={canvas} className="flow relative min-w-0 flex-1 bg-well">
+          {status === "ready" && !selected && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-well">
+              <EmptyState title="No workflows yet">
+                <p>A workflow runs programs one after another, passing files along.</p>
+                <Button className="mt-5" onClick={createNew}>
+                  <Plus />
+                  New workflow
+                </Button>
+              </EmptyState>
+            </div>
+          )}
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
-            onNodesDelete={onNodesDelete}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onDrop={onDrop}
-            onInit={setRfInstance}
             onDragOver={onDragOver}
             fitView
+            fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           >
-            <MiniMap />
-            <Panel className="flex gap-1" position="bottom-center">
-              <div onClick={runWorkflow}>
-                <CustomButton
-                  color={"#355cc9"}
-                  Icon={Play}
-                  text={"Run Workflow"}
-                />
-              </div>
-              <div onClick={onSave}>
-                <CustomButton
-                  color={"#22c55e "}
-                  Icon={Save}
-                  text={"Save"}
-                ></CustomButton>
-              </div>
-              <div onClick={onSaveUpgrade}>
-                <CustomButton
-                  color={"#16a34a"} // Vert foncé pour "Upgrade Version"
-                  Icon={Save}
-                  text={"Upgrade Version"}
-                ></CustomButton>
-              </div>
-              <div onClick={cloneWorkflow}>
-                <CustomButton
-                  color={"#3b82f6"} // Bleu clair pour "Clone"
-                  Icon={Save}
-                  text={"Clone"}
-                ></CustomButton>
-              </div>
-              <div onClick={deleteWorkflowByID}>
-                <CustomButton
-                  color={"#b91c1c"}
-                  Icon={Trash2}
-                  text={"Delete"}
-                ></CustomButton>
-              </div>
-            </Panel>
-            <Controls />
-            <Background variant="dots" gap={16} size={1} />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(226 22% 26%)" />
+            <Controls showInteractive={false} />
+            <MiniMap
+              className="!hidden md:!block"
+              pannable
+              zoomable
+              nodeColor="hsl(226 26% 30%)"
+              maskColor="hsl(226 38% 9% / 0.7)"
+            />
+            {results && (
+              <Panel
+                position="top-right"
+                className="w-[min(22rem,calc(100%-30px))] rounded-xl border bg-popover shadow-xl"
+              >
+                <div className="flex items-center justify-between border-b py-1.5 pl-4 pr-1.5">
+                  <h2 className="text-sm font-semibold">{running ? "Running…" : "Last run"}</h2>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label="Close run output"
+                    onClick={() => setResults(null)}
+                  >
+                    <X />
+                  </Button>
+                </div>
+                <ol className="max-h-64 space-y-3 overflow-y-auto p-4 text-sm" aria-live="polite">
+                  {results.length === 0 && (
+                    <li className="text-muted-foreground">
+                      {running ? "Starting…" : "No program ran. Put one between Run and Finish."}
+                    </li>
+                  )}
+                  {results.map((result, index) => (
+                    <li key={index}>
+                      <p className="font-medium">
+                        <span className="mr-1.5 tabular-nums text-muted-foreground">{index + 1}.</span>
+                        {result.label}
+                      </p>
+                      {result.error && (
+                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-red-400">
+                          {result.error}
+                        </pre>
+                      )}
+                      {result.text !== undefined && (
+                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+                          {result.text || "Printed nothing."}
+                        </pre>
+                      )}
+                      {result.fileUrl && (
+                        <Button asChild variant="outline" size="sm" className="mt-1.5">
+                          <a href={result.fileUrl} download={result.fileName}>
+                            <Download />
+                            Download {result.fileName}
+                          </a>
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </Panel>
+            )}
           </ReactFlow>
         </div>
       </div>
+
+      <Sheet open={stepsOpen} onOpenChange={setStepsOpen}>
+        <SheetContent side="left" className="w-80 overflow-y-auto p-0 pt-8">
+          <SheetTitle className="sr-only">Workflows and steps</SheetTitle>
+          <SheetDescription className="sr-only">
+            Pick a workflow, or tap a step to add it to the canvas.
+          </SheetDescription>
+          {sidebar}
+        </SheetContent>
+      </Sheet>
+
+      <ConfirmDialog
+        open={confirming === "workflow"}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title={`Delete ${selected?.name}?`}
+        description="Every version of this workflow is removed. This can't be undone."
+        confirmLabel="Delete workflow"
+        onConfirm={remove}
+      />
+      <ConfirmDialog
+        open={confirming === "version"}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title={`Delete version ${version}?`}
+        description="The other versions stay. This can't be undone."
+        confirmLabel="Delete version"
+        onConfirm={removeVersion}
+      />
     </div>
   );
 };
 
 export default () => (
   <ReactFlowProvider>
-    <DnDFlow />
+    <WorkflowEditor />
   </ReactFlowProvider>
 );

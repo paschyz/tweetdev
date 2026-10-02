@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext } from "react";
 import { hasAuthToken } from "../services/sessionService";
-import { setSession, clearSession } from "../services/sessionService";
+import { setSession, clearSession, getSession } from "../services/sessionService";
 import { useNavigate } from "react-router-dom";
 import { logout } from "../api/auth";
 interface AuthContextType {
@@ -16,13 +16,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const navigate = useNavigate();
   const loginAndSetToken = (token: string) => {
-    console.log("token :", token);
     setSession(token);
     setIsLoggedIn(true);
   };
 
   const logoutAndClearToken = () => {
-    logout();
+    const token = getSession();
+    if (token) logout(token).catch(() => {});
     clearSession();
     setIsLoggedIn(false);
     navigate("/logout");

@@ -18,9 +18,12 @@ export const login = async (formData: { login: string; password: string }): Prom
   }
 };
 
-export const logout = async (): Promise<void> => {
+export const logout = async (token: string): Promise<void> => {
   try {
-    await axios.delete(`${API_BASE_URL}/auth/logout`);
+    // without the token the API cannot tell which session to end
+    await axios.delete(`${API_BASE_URL}/auth/logout`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
   } catch (error) {
     console.error("Error logging out:", error);
     throw error;

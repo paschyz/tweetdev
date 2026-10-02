@@ -1,212 +1,215 @@
-import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import Favorites from "../components/Favorites";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { CalendarDays, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   deleteHubByName,
   fetchHubByName,
   fetchHubPosts,
   fetchIsAdminHub,
 } from "../api/hub";
-import { getSession } from "../services/sessionService";
-import { IHub } from "../interfaces/IHub";
-import { convertTimestampToMonthYear, navigateTo } from "../utils/utils";
+import { ConfirmDialog } from "../components/DeleteMenu";
+import { EmptyState, FeedSkeleton } from "../components/FeedItem";
+import FollowButton from "../components/FollowButton";
+import HubFormDialog from "../components/HubFormDialog";
+import { HubIcon } from "../components/Identity";
 import Post from "../components/Post";
-import IPost from "../interfaces/IPost";
-import { Clock, DotsThreeVertical } from "@phosphor-icons/react";
-import ModalFollowers from "../components/ModalFollowers";
-import FollowHubButton from "../components/buttons/FollowHubButton";
-import CustomButton from "../components/buttons/CustomButton";
-import { Trash2 } from "lucide-react";
-import toast from "react-hot-toast";
-import EditHubButton from "../components/buttons/EditHubButton";
+import TimelineLayout, { PageHeader } from "../components/TimelineLayout";
+import { Button } from "../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { Skeleton } from "../components/ui/skeleton";
+import { IHub } from "../interfaces/IHub";
+import { refresh, useRefreshKey } from "../lib/lookups";
+import { Items, without } from "../lib/utils";
+import { getSession } from "../services/sessionService";
+import { convertTimestampToMonthYear } from "../utils/utils";
 
 function Hub() {
-  const [posts, setPosts] = useState<IPost[]>([]);
-
-  let { name } = useParams();
-  const [notFoundHub, setNotFoundHub] = useState("");
-
-  const [followersCount, setFollowersCount] = useState(0);
-
-  const followerText = followersCount > 1 ? "Followers" : "Follower";
-  const sessionToken = getSession();
+  const { name } = useParams();
+  const navigate = useNavigate();
+  const refreshKey = useRefreshKey();
+  const [hub, setHub] = useState<IHub | null | undefined>(undefined); // null: not found
+  const [posts, setPosts] = useState<Items>(null);
+  const [followers, setFollowers] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [hub, setHub] = useState<IHub>({
-    _id: "",
-    name: "",
-    posts: [],
-    description: "",
-    creationDate: "",
-    profileImageUrl: "",
-    coverImageUrl: "",
-    users: [],
-    admins: [],
-  });
+  const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
 
-  const incrementFollowers = () => {
-    setFollowersCount((prevCounter) => prevCounter + 1);
-  };
+  // another hub: back to loading. A refresh (follow, edit) updates in place instead.
+  useEffect(() => {
+    setHub(undefined);
+    setPosts(null);
+    setIsAdmin(false);
+  }, [name]);
 
-  const decrementFollowers = () => {
-    setFollowersCount((prevCounter) => prevCounter - 1);
-  };
+  useEffect(() => {
+    const token = getSession();
+    const encoded = encodeURIComponent(name); // these endpoints build their own query string
+    fetchHubByName(token, encoded)
+      .then((found) => {
+        setHub(found || null);
+        setFollowers(found?.users?.length ?? 0);
+      })
+      .catch(() => setHub(null));
+    fetchHubPosts(token, encoded).then(setPosts).catch(() => setPosts([]));
+    fetchIsAdminHub(token, encoded)
+      .then((admin) => setIsAdmin(!!admin))
+      .catch(() => setIsAdmin(false));
+  }, [name, refreshKey]);
+
   const deleteHub = async () => {
-    if (name) {
-      try {
-        const deleteResponse = deleteHubByName(sessionToken, name);
-        toast.success("deleted hub !");
-        window.location.href = "/";
-      } catch (error) {
-        toast.error("error deleting hub");
-      }
+    try {
+      await deleteHubByName(getSession(), encodeURIComponent(name));
+      toast.success("Hub deleted");
+      refresh();
+      navigate("/");
+    } catch {
+      toast.error("Couldn't delete the hub. Try again.");
     }
   };
-  const updateHub = async () => {};
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const sessionToken = getSession();
+  const owner = hub?.admins?.[0];
 
-        if (sessionToken && name) {
-          const hubData = await fetchHubByName(sessionToken, name);
-          setHub(hubData);
-          const postsData = await fetchHubPosts(sessionToken, name);
-          setPosts(postsData);
-          setFollowersCount(hubData.users.length);
-
-          const isAdminResponse = await fetchIsAdminHub(sessionToken, name);
-          setIsAdmin(isAdminResponse);
-        }
-      } catch (error) {
-        setNotFoundHub("This hub doesn’t exist");
-        console.error("Error fetching hub info:", error);
-      }
-    };
-    fetchData();
-  }, []);
-  useEffect(() => {
-    console.log("isAdmin:", isAdmin);
-  }, [isAdmin]);
   return (
-    <div className="profile-container grid grid-cols-[1fr_3.5fr] gap-4 p-12 mt-6 ">
-      {!hub && <>Loading...</>}
+    <TimelineLayout>
+      <PageHeader title={name} back />
+
+      {hub === null && (
+        <EmptyState title="This hub doesn't exist">
+          Check the spelling, or it may have been deleted.
+        </EmptyState>
+      )}
+
+      {hub === undefined && (
+        <div className="border-b pb-5">
+          <Skeleton className="h-36 rounded-none sm:h-48" />
+          <div className="space-y-3 px-5 pt-16">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+        </div>
+      )}
 
       {hub && (
         <>
-          <div className="hidden lg:block">
-            <Favorites></Favorites>
-          </div>
-          <div className="profile-card border-2 border-componentBorder rounded-xl grid grid-rows-[60fr_25fr_15fr] h-[600px] mr-6 col-span-2 lg:col-span-1">
+          <section className="border-b">
             <div
-              className="border-b-2 border-componentBorder rounded-t-xl"
-              style={{
-                backgroundImage: `url(${hub.coverImageUrl})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              }}
-            ></div>
-            <div className="border-b-2 bg-componentBg border-componentBorder grid grid-cols-[15fr_67fr_18fr]">
-              <div className="flex justify-center">
-                <div
-                  className="h-[180px] w-[180px] border-4 border-cyan-400 rounded-full mt-[-60px] ml-6 mr-2"
-                  style={{
-                    backgroundImage: `url(${hub.profileImageUrl})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }}
-                ></div>
-              </div>
-              <div className="flex flex-col gap-3 p-4">
-                <p className="text-xl font-semibold ">{hub.name}</p>
-                <div className="flex flex-row gap-3">
-                  <ModalFollowers
-                    followersCount={followersCount}
-                    followersText={followerText}
-                  ></ModalFollowers>
-                </div>
-                <p className="text-secondaryColor text-xs font-medium">
-                  <Clock color="#C7C9CE" weight="bold" size={22}></Clock> Hub
-                  Since {convertTimestampToMonthYear(hub.creationDate)}
-                </p>
-              </div>
-              <div className="grid grid-rows-[40fr_50fr]">
-                <div className="flex gap-3 p-2">
-                  <FollowHubButton
-                    increment={incrementFollowers}
-                    decrement={decrementFollowers}
+              className="h-36 bg-secondary bg-cover bg-center sm:h-48"
+              style={hub.coverImageUrl ? { backgroundImage: `url("${hub.coverImageUrl}")` } : undefined}
+            />
+            <div className="px-4 pb-5 sm:px-5">
+              <div className="flex items-end justify-between gap-3">
+                <HubIcon
+                  name={hub.name}
+                  src={hub.profileImageUrl ?? ""}
+                  className="-mt-12 h-24 w-24 rounded-2xl border-4 border-background sm:-mt-14 sm:h-28 sm:w-28 [&>span]:text-2xl"
+                />
+                <div className="flex items-center gap-2 pb-1">
+                  <FollowButton
+                    kind="hub"
                     name={hub.name}
+                    onChange={(delta) => setFollowers((count) => count + delta)}
                   />
                   {isAdmin && (
-                    <>
-                      <div className="flex items-center cursor-pointer relative group">
-                        <div className="absolute bg-whitez-10 top-10 right-0 hidden group-hover:block">
-                          <EditHubButton hub={hub}></EditHubButton>
-                          <button
-                            className="font-medium bg-red-100 text-nowrap rounded-lg  p-2 flex items-center gap-2 hover:bg-red-200 text-sm mt-1"
-                            onClick={deleteHub}
-                          >
-                            <Trash2
-                              size={20}
-                              weight="bold"
-                              color="#b91c1c"
-                            ></Trash2>
-                            <span className="text-red-700 ">Delete Hub</span>
-                          </button>
-                        </div>
-                        <DotsThreeVertical
-                          size={30}
-                          weight="bold"
-                        ></DotsThreeVertical>
-                      </div>
-                    </>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="icon" aria-label="Hub settings">
+                          <MoreHorizontal />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => setDialog("edit")}>
+                          <Pencil />
+                          Edit hub
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-red-400 focus:text-red-400"
+                          onSelect={() => setDialog("delete")}
+                        >
+                          <Trash2 />
+                          Delete hub
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
-                <div
-                  className="text-xs font-semibold text-end mr-12 cursor-pointer"
-                  onClick={() => navigateTo("/profile/" + hub.admins[0])}
-                >
-                  Owner: {hub.admins[0]}
-                </div>
+              </div>
+
+              <h2 className="mt-3 text-2xl font-bold tracking-tight">{hub.name}</h2>
+              {hub.description && (
+                <p className="mt-2 max-w-prose whitespace-pre-wrap text-[15px] leading-relaxed">
+                  {hub.description}
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground">
+                <span>
+                  <span className="font-semibold text-foreground">{followers}</span>{" "}
+                  {followers === 1 ? "Member" : "Members"}
+                </span>
+                {owner && (
+                  <span>
+                    Run by{" "}
+                    <Link
+                      to={"/profile/" + encodeURIComponent(owner)}
+                      className="font-medium text-foreground hover:underline"
+                    >
+                      {owner}
+                    </Link>
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="h-4 w-4" />
+                  Created {convertTimestampToMonthYear(hub.creationDate)}
+                </span>
               </div>
             </div>
-            <div className="p-6 bg-componentBg grid grid-cols-[68fr_32fr] gap-5">
-              <div className=" text-secondaryColor text-sm font-medium">
-                {hub.description}
-                {notFoundHub}
-              </div>
-              {/* <div className="flex justify-around items-center">
-                <InstagramLogo size={24} weight="fill"></InstagramLogo>
-                <YoutubeLogo size={24} weight="fill"></YoutubeLogo>
-                <XLogo size={24} weight="fill"></XLogo>
-                <TwitchLogo size={24} weight="fill"></TwitchLogo>
-                <GithubLogo size={24} weight="fill"></GithubLogo>
-              </div> */}
-            </div>
-          </div>
-          <div className=" -mt-20 mr-10 flex flex-col gap-4  col-span-2 lg:col-start-2">
-            {posts.map((post, index) => (
-              <Post postInfo={post} key={index} />
-            ))}
-          </div>
+          </section>
+
+          {!posts && <FeedSkeleton />}
+          {posts?.length === 0 && (
+            <EmptyState title="Nothing posted here yet">
+              Follow the hub, then pick it under "Post in" when you{" "}
+              <Link
+                to="/create-post"
+                className="font-medium text-foreground underline underline-offset-4 hover:text-primary"
+              >
+                write a post
+              </Link>
+              .
+            </EmptyState>
+          )}
+          {posts?.map((post) => (
+            <Post
+              key={post._id}
+              postInfo={post}
+              to={"/post/" + post._id}
+              onDeleted={without(setPosts)}
+            />
+          ))}
+
+          <HubFormDialog
+            hub={hub}
+            open={dialog === "edit"}
+            onOpenChange={(open) => setDialog(open ? "edit" : null)}
+          />
+          <ConfirmDialog
+            open={dialog === "delete"}
+            onOpenChange={(open) => setDialog(open ? "delete" : null)}
+            title={`Delete ${hub.name}?`}
+            description="The hub is removed for everyone who follows it. This can't be undone."
+            confirmLabel="Delete hub"
+            onConfirm={deleteHub}
+          />
         </>
       )}
-    </div>
+    </TimelineLayout>
   );
-  // return (
-  //   <div className="hub-container mt-6 grid grid-cols-[1fr_3.5fr] p-12 gap-4 ">
-  //     <div>
-  //       <Favorites></Favorites>
-  //     </div>
-  //     <div className="bg-componentBg col-span-4 row-span-3">4 {hub.name}</div>
-  //     <div className="col-span-3 col-start-2 row-start-4">5 {hub.description}</div>
-  //     <div className="col-start-5 row-start-4">6
-  //     {!hub.users && (<div>Loading </div>)}
-  //     {hub.users && (<div>{hub.users.length} </div>)}
-
-  //     </div>
-  //   </div>
-  // );
 }
 
 export default Hub;

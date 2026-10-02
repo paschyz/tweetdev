@@ -1,124 +1,84 @@
-import React, { useEffect, useState, useCallback } from "react";
-import "../styles/Feed.css";
-import { getSession } from "../services/sessionService";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchPosts } from "../api/post";
-import { IPost } from "../interfaces";
-import Post from "../components/Post";
-import Favorites from "../components/Favorites";
 import { fetchPrograms } from "../api/programs";
-import Workflow from "../components/Workflow";
 import { fetchWorkflows } from "../api/workflow";
-import Program from "../components/program/Program";
-import { IHub } from "../interfaces/IHub";
-import { fetchHubs } from "../api/hub";
-import FeaturedHubItem from "../components/FeaturedHubItem";
+import { EmptyState, FeedSkeleton } from "../components/FeedItem";
+import Post from "../components/Post";
+import Program from "../components/Program";
+import TimelineLayout from "../components/TimelineLayout";
+import Workflow from "../components/Workflow";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Items, without } from "../lib/utils";
+import { getSession } from "../services/sessionService";
 
 const Feed = () => {
-  const [portals, setPortals] = useState<IHub[]>([]);
-  const [posts, setPosts] = useState<IPost[]>([]);
-  const [programs, setPrograms] = useState<IProgram[]>([]);
-  const [workflows, setWorkflows] = useState<any[]>([]);
-  const [selectedMode, setSelectedMode] = useState("posts");
+  const [posts, setPosts] = useState<Items>(null);
+  const [programs, setPrograms] = useState<Items>(null);
+  const [workflows, setWorkflows] = useState<Items>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const sessionToken = getSession();
-        if (sessionToken) {
-          const postsData = await fetchPosts(sessionToken, true);
-          setPosts(postsData);
-          const programsData = await fetchPrograms(sessionToken);
-          setPrograms(programsData);
-          const workflowsData = await fetchWorkflows(sessionToken);
-          setWorkflows(workflowsData);
-        }
-      } catch (error) {
-        console.error(`Error fetching ${selectedMode}:`, error);
-      }
-    };
-
-    const fetchHubsData = async () => {
-      try {
-        const sessionToken = getSession();
-        if (sessionToken) {
-          const hubsData = await fetchHubs(sessionToken);
-          setPortals(hubsData);
-        } else {
-          console.error("Error fetching posts");
-        }
-      } catch (error) {
-        console.error("Error fetching posts:", error);
-      }
-    };
-
-    fetchHubsData();
-    fetchData();
-  }, [selectedMode]);
-
-  const handleModeChange = useCallback((mode: React.SetStateAction<string>) => {
-    setSelectedMode(mode);
+    const token = getSession();
+    fetchPosts(token, true).then(setPosts).catch(() => setPosts([]));
+    fetchPrograms(token).then(setPrograms).catch(() => setPrograms([]));
+    fetchWorkflows(token).then(setWorkflows).catch(() => setWorkflows([]));
   }, []);
 
+  const link = "font-medium text-foreground underline underline-offset-4 hover:text-primary";
+
   return (
-    <div className="feed-container grid grid-cols-[1fr_800px_1.2fr] gap-4 p-12 mt-6">
-      <div className="hidden sm:block">
-        <Favorites />
-      </div>
+    <TimelineLayout hubStrip>
+      <Tabs defaultValue="posts">
+        <TabsList className="sticky top-14 z-30 bg-background/85 backdrop-blur lg:top-0">
+          <TabsTrigger value="posts">Posts</TabsTrigger>
+          <TabsTrigger value="programs">Programs</TabsTrigger>
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
+        </TabsList>
 
-      <div className="flex flex-col gap-4 col-span-2 sm:col-span-2 lg:col-span-1">
-        <div className="flex gap-4 mb-4 flex-row font-medium">
-          <button
-            className={`py-2 px-4 rounded-md ${
-              selectedMode === "posts"
-                ? "bg-accentColor text-white"
-                : "bg-gray-200 text-gray-800"
-            } hover:bg-accentColorHover`}
-            onClick={() => handleModeChange("posts")}
-          >
-            Posts
-          </button>
-          <button
-            className={`py-2 px-4 rounded-md ${
-              selectedMode === "programs"
-                ? "bg-accentColor text-white"
-                : "bg-gray-200 text-gray-800"
-            } hover:bg-accentColorHover`}
-            onClick={() => handleModeChange("programs")}
-          >
-            Programs
-          </button>
-          <button
-            className={`py-2 px-4 rounded-md ${
-              selectedMode === "workflows"
-                ? "bg-accentColor text-white"
-                : "bg-gray-200 text-gray-800"
-            } hover:bg-accentColorHover`}
-            onClick={() => handleModeChange("workflows")}
-          >
-            Workflows
-          </button>
-        </div>
-        {selectedMode === "posts" &&
-          posts.map((post, index) => <Post postInfo={post} key={index} />)}
-        {selectedMode === "programs" &&
-          programs.map((program, index) => (
-            <Program programInfo={program} key={index} />
+        <TabsContent value="posts">
+          {!posts && <FeedSkeleton />}
+          {posts?.length === 0 && (
+            <EmptyState title="No posts yet">
+              Be the first: <Link to="/create-post" className={link}>write a post</Link>.
+            </EmptyState>
+          )}
+          {posts?.map((post) => (
+            <Post
+              key={post._id}
+              postInfo={post}
+              to={"/post/" + post._id}
+              onDeleted={without(setPosts)}
+            />
           ))}
-        {selectedMode === "workflows" &&
-          workflows.map((workflow, index) => (
-            <Workflow programInfo={workflow} key={index} />
-          ))}
-      </div>
+        </TabsContent>
 
-      <div className="hidden lg:block">
-        <div className="pt-4 px-6 text-lg font-medium flex flex-col gap-3 shrink-0">
-          Featured Hubs
-          {portals.map((hub, index) => (
-            <FeaturedHubItem hub={hub} key={index} />
+        <TabsContent value="programs">
+          {!programs && <FeedSkeleton />}
+          {programs?.length === 0 && (
+            <EmptyState title="No programs yet">
+              Programs are snippets anyone can run.{" "}
+              <Link to="/program" className={link}>Create a program</Link>.
+            </EmptyState>
+          )}
+          {programs?.map((program) => (
+            <Program key={program._id} programInfo={program} onDeleted={without(setPrograms)} />
           ))}
-        </div>
-      </div>
-    </div>
+        </TabsContent>
+
+        <TabsContent value="workflows">
+          {!workflows && <FeedSkeleton />}
+          {workflows?.length === 0 && (
+            <EmptyState title="No workflows yet">
+              A workflow runs programs one after another.{" "}
+              <Link to="/workflow" className={link}>Build a workflow</Link>.
+            </EmptyState>
+          )}
+          {workflows?.map((workflow) => (
+            <Workflow key={workflow._id} programInfo={workflow} onDeleted={without(setWorkflows)} />
+          ))}
+        </TabsContent>
+      </Tabs>
+    </TimelineLayout>
   );
 };
 
