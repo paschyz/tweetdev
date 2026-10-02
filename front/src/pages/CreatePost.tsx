@@ -6,6 +6,7 @@ import { createPost } from "../api/post";
 import { fetchPrograms } from "../api/programs";
 import { fetchUserHubs } from "../api/user";
 import { Field } from "../components/Field";
+import { safeMarkdown } from "../components/Markdown";
 import { Button } from "../components/ui/button";
 import {
   Select,
@@ -95,6 +96,7 @@ export default function CreatePost() {
           value={value}
           onChange={(text) => setValue(text ?? "")}
           height={380}
+          previewOptions={{ rehypePlugins: safeMarkdown }}
           // side-by-side preview needs width: phones get the editor alone
           preview={window.matchMedia("(min-width: 640px)").matches ? "live" : "edit"}
           textareaProps={{

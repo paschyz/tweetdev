@@ -18,7 +18,36 @@ const docker = new Docker();
 // Binds are resolved by the Docker host: when the API itself runs in a container,
 // RUNNER_DIR must be a directory mounted at the same path on host and in the container.
 const RUNNER_DIR = process.env.RUNNER_DIR ?? __dirname;
-const upload = multer({ dest: path.join(RUNNER_DIR,'uploads') });
+const { randomUUID } = require('crypto');
+
+// Limits for one run of user code. Anyone with an account can submit code: treat it as hostile.
+const RUN_TIMEOUT_MS = 10_000;
+const RUN_MEMORY_BYTES = 256 * 1024 * 1024;
+const RUN_CPUS = 0.5;
+const RUN_MAX_PIDS = 64;
+const MAX_CODE_BYTES = 100 * 1024;
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_LOG_BYTES = 1024 * 1024;
+const MAX_OUTPUT_FILE_BYTES = 20 * 1024 * 1024;
+const RUNS_PER_MINUTE = 20;
+const FILE_TYPE = /^[a-z0-9]{1,5}$/;
+
+const upload = multer({
+    dest: path.join(RUNNER_DIR,'uploads'),
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fieldSize: MAX_CODE_BYTES },
+});
+// multer errors (file or code too large) become a readable 413 instead of the default 500 page
+const uploadFile: express.RequestHandler = (req, res, next) =>
+    upload.single('file')(req, res, (err: any) => {
+        if (err) {
+            res.status(413).send('The file or the code is too large (10 MB file, 100 KB code).');
+            return;
+        }
+        next();
+    });
+
+// ponytail: in-memory, single back instance; move to Redis if the API ever runs as several instances
+const runsByUser = new Map<string, { running: boolean; started: number[] }>();
 interface LanguageConfig {
     extension: string;
     image: string;
@@ -649,6 +678,158 @@ executePipeline = async (req: Request, res: Response): Promise<void> => {
         }
     };
     
+    /**
+     * Runs user code in a throwaway container: no network, non-root, read-only filesystem,
+     * capped memory / CPU / processes / time, and a private /data directory per run.
+     * Responds with the program's output (text), or with /data/output.<type> when a file type is asked for.
+     */
+    runProgram = async (req: Request, res: Response): Promise<void> => {
+        const { language, code } = req.body;
+        const outputFileType: string = req.body.outputFileType || 'void';
+        const file = req.file as Express.Multer.File | undefined;
+        const username = String(req.user?.username);
+        const inputFileType = file ? path.extname(file.originalname).slice(1).toLowerCase() : '';
+
+        const runDir = path.join(RUNNER_DIR, 'runs', randomUUID());
+        let container: any;
+        let usage = runsByUser.get(username);
+        let holdsSlot = false; // true once this request is the user's running one
+
+        try {
+            // hasOwn: "constructor" and friends are not languages
+            if (typeof language !== 'string' || !Object.prototype.hasOwnProperty.call(LANGUAGES, language)) {
+                res.status(400).send('Unsupported language');
+                return;
+            }
+            if (typeof code !== 'string' || Buffer.byteLength(code) > MAX_CODE_BYTES) {
+                res.status(400).send('The code is missing or larger than 100 KB.');
+                return;
+            }
+            // these end up in file names: letters and digits only, so no "../" and no ":" in a bind
+            if (!FILE_TYPE.test(outputFileType) || (file && !FILE_TYPE.test(inputFileType))) {
+                res.status(400).send('Unsupported file type.');
+                return;
+            }
+
+            const now = Date.now();
+            if (!usage) {
+                usage = { running: false, started: [] };
+                runsByUser.set(username, usage);
+            }
+            usage.started = usage.started.filter((time) => now - time < 60_000);
+            if (usage.running || usage.started.length >= RUNS_PER_MINUTE) {
+                res.status(429).send('Too many runs. Wait for the current one to finish, then try again in a moment.');
+                return;
+            }
+            usage.running = holdsSlot = true;
+            usage.started.push(now);
+
+            const langConfig = LANGUAGES[language];
+            const codeFileName = `script.${langConfig.extension}`;
+            const containerCodeFilePath = `/app/${codeFileName}`;
+
+            await fs.promises.mkdir(runDir, { recursive: true });
+            await fs.promises.chmod(runDir, 0o777); // the container user is not root
+            await fs.promises.writeFile(path.join(runDir, codeFileName), code);
+            if (file) {
+                await fs.promises.rename(file.path, path.join(runDir, `input.${inputFileType}`));
+            }
+
+            container = await docker.createContainer({
+                Image: langConfig.image,
+                name: `code-exec-${path.basename(runDir)}`,
+                Cmd: langConfig.cmd(containerCodeFilePath),
+                Tty: true,
+                User: '1000:1000',
+                Env: ['HOME=/tmp', 'MPLCONFIGDIR=/tmp'],
+                HostConfig: {
+                    Binds: [
+                        `${runDir}:/data`,
+                        `${path.join(runDir, codeFileName)}:${containerCodeFilePath}:ro`,
+                    ],
+                    NetworkMode: 'none',
+                    Memory: RUN_MEMORY_BYTES,
+                    MemorySwap: RUN_MEMORY_BYTES, // same as Memory: no swap
+                    NanoCpus: RUN_CPUS * 1e9,
+                    PidsLimit: RUN_MAX_PIDS,
+                    CapDrop: ['ALL'],
+                    SecurityOpt: ['no-new-privileges'],
+                    ReadonlyRootfs: true,
+                    Tmpfs: { '/tmp': 'rw,size=16m' },
+                    // ponytail: caps each file, not the number of files; add a disk quota if /data abuse shows up
+                    Ulimits: [{ Name: 'fsize', Soft: MAX_OUTPUT_FILE_BYTES, Hard: MAX_OUTPUT_FILE_BYTES }],
+                    LogConfig: { Type: 'json-file', Config: { 'max-size': '2m', 'max-file': '1' } },
+                },
+            });
+            await container.start();
+
+            let timer: NodeJS.Timeout | undefined;
+            const timedOut = await Promise.race([
+                container.wait().then(() => false),
+                new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), RUN_TIMEOUT_MS); }),
+            ]);
+            clearTimeout(timer);
+            if (timedOut) {
+                await container.kill().catch(() => null);
+            }
+
+            // the program is over: free the user's slot now, so a run started right after the response is not refused
+            usage.running = holdsSlot = false;
+
+            const { State } = await container.inspect();
+            // read as a stream: without `follow`, dockerode JSON-parses the body, so a program printing `1` or `{}` came back as a number or an object
+            const logStream = await container.logs({ stdout: true, stderr: true, follow: true, tail: 5000 });
+            const chunks: Buffer[] = [];
+            let logBytes = 0;
+            await new Promise<void>((resolve) => {
+                logStream.on('data', (chunk: Buffer) => {
+                    if (logBytes < MAX_LOG_BYTES) chunks.push(chunk);
+                    logBytes += chunk.length;
+                });
+                logStream.on('end', resolve);
+                logStream.on('error', resolve);
+            });
+            let logs = Buffer.concat(chunks).subarray(0, MAX_LOG_BYTES).toString();
+            if (logBytes > MAX_LOG_BYTES) logs += '\n[output cut at 1 MB]';
+
+            if (timedOut) {
+                res.status(408).type('text/plain').send(`${logs}\n[stopped: the program ran longer than ${RUN_TIMEOUT_MS / 1000} seconds]`);
+                return;
+            }
+            if (State.OOMKilled) {
+                res.status(500).type('text/plain').send(`${logs}\n[stopped: the program used more than 256 MB of memory]`);
+                return;
+            }
+            if (outputFileType === 'void') {
+                res.type('text/plain').send(logs);
+                return;
+            }
+
+            // lstat, not stat: the program could make output.<type> a symlink to a file of this server
+            const outputPath = path.join(runDir, `output.${outputFileType}`);
+            const stats = await fs.promises.lstat(outputPath).catch(() => null);
+            if (!stats || !stats.isFile()) {
+                res.status(500).type('text/plain').send(`${logs}\n[the program did not write /data/output.${outputFileType}]`);
+                return;
+            }
+            if (stats.size > MAX_OUTPUT_FILE_BYTES) {
+                res.status(413).type('text/plain').send('The output file is larger than 20 MB.');
+                return;
+            }
+            res.type(getMimeType(outputFileType)).send(await fs.promises.readFile(outputPath));
+        } catch (error) {
+            console.error('Erreur:', error);
+            if (!res.headersSent) {
+                res.status(500).type('text/plain').send('The program could not be run.');
+            }
+        } finally {
+            if (holdsSlot && usage) usage.running = false;
+            if (container) await container.remove({ force: true }).catch(() => null);
+            await fs.promises.rm(runDir, { recursive: true, force: true }).catch(() => null);
+            if (file) await fs.promises.rm(file.path, { force: true }).catch(() => null);
+        }
+    };
+
     buildRouter = (): Router => {
         const router = express.Router()
         router.get('/', checkUserToken(), this.getAllPrograms.bind(this))
@@ -660,11 +841,11 @@ executePipeline = async (req: Request, res: Response): Promise<void> => {
         router.post('/', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), checkBody(this.paramsNewProgram), this.newProgram.bind(this))
         router.put('/', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), checkBody(this.paramsUpdateProgram), this.updateProgram.bind(this))
         router.delete('/', checkUserToken(), checkUserRole(RolesEnums.guest), this.deleteProgram.bind(this))
-        router.post('/execute', express.json(), checkUserToken(),  upload.single('file'), this.testExecutePipeline.bind(this))
-        router.post('/execute/test', express.json(), checkUserToken(),  upload.single('file'), this.testExecutePipeline.bind(this))
+        router.post('/execute', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), uploadFile, this.runProgram.bind(this))
+        router.post('/execute/test', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), uploadFile, this.runProgram.bind(this))
 
-        router.post('/pipeline/execute', express.json(), checkUserToken(), upload.single('file'), this.testExecutePipeline.bind(this))
-        router.post('/test/pipeline/execute', express.json(), checkUserToken(), upload.single('file'), this.testExecutePipeline.bind(this))
+        router.post('/pipeline/execute', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), uploadFile, this.runProgram.bind(this))
+        router.post('/test/pipeline/execute', express.json(), checkUserToken(), checkUserRole(RolesEnums.guest), uploadFile, this.runProgram.bind(this))
 
         return router
     }

@@ -1,7 +1,11 @@
 import MDEditor from "@uiw/react-md-editor";
+import rehypeSanitize from "rehype-sanitize";
+
+// Posts and comments are written by anyone: raw HTML in them is stripped down to safe tags.
+export const safeMarkdown = [rehypeSanitize];
 
 export function Markdown({ source }: { source: string }) {
-  return <MDEditor.Markdown source={source} />;
+  return <MDEditor.Markdown source={source} rehypePlugins={safeMarkdown} />;
 }
 
 const PREVIEW_LINES = 14;
