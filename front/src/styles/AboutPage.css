@@ -1,0 +1,30 @@
+.aboutpage_description{
+    font-size: medium;
+}
+
+.aboutpage_container h2{
+    margin-bottom: 1em;
+}
+
+.aboutpage_container{
+    margin-left: 12em;
+    margin-right: 12em;
+}
+
+.aboutpage_container img{
+    max-width: 100%;
+    border-radius: 10px;
+    margin-bottom: 1em; 
+}
+
+.aboutpage_container {
+    margin-bottom: 2em;
+}
+
+.aboutpage_container strong{
+    font-weight: 600;
+}
+
+.aboutpage_container i{
+    font-weight: 600;
+}

@@ -1,0 +1,46 @@
+/* src/Header.css */
+
+.header {
+    font-weight: 400;
+    font-size: 16px;
+    text-decoration: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 25px 5%;
+    z-index: 99;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+        user-select: none;
+    max-height: 4rem;
+  }
+  
+  .header_logo-link {
+      cursor: pointer;
+      text-decoration: none;
+      font-size: larger;
+      font-weight: 600;
+      color: inherit;
+      
+  }
+  
+.header_nav-menu {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+}
+
+.header_nav-item {
+  
+    display: inline-block;
+    padding: 0px 20px;
+}
+.header_nav-link {
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+

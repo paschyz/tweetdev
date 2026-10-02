@@ -1,0 +1,48 @@
+services:
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+
+  back:
+    build: ./back
+    env_file: .env
+    environment:
+      # overrides the Atlas URI from .env (that cluster no longer resolves)
+      MONGODB_URI: mongodb://mongo:27017/tweetdev
+      FRONT_BASE_URL: http://localhost:4000
+      RUNNER_DIR: ${PWD}/back/.runner
+    ports:
+      - "3000:3000"
+    volumes:
+      # code runner: the API starts sibling containers through the host daemon,
+      # so its scratch dir must have the same path on the host and in here
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}/back/.runner:${PWD}/back/.runner
+    depends_on:
+      - mongo
+    restart: on-failure
+    # ponytail: runner images my-python-image / my-node-image must already exist locally
+    # (built from back/dockerfiles/*). Not built here: the node one's base (node:16-slim,
+    # Debian buster) no longer apt-installs; switch it to node:16-bullseye-slim to rebuild.
+
+  front:
+    build:
+      context: ./front
+      args:
+        API_BASE_URL: http://localhost:3000
+        FRONT_BASE_URL: http://localhost:4000
+    # Dockerfile CMD uses exec form, so "$PORT" is never expanded
+    command: serve -s . -l 80
+    ports:
+      - "4000:80"
+    depends_on:
+      - back
+
+volumes:
+  mongo_data:
+
+      

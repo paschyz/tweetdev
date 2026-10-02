@@ -1,0 +1,105 @@
+.tweetDev-container{
+    width:100%;
+    border:1px solid black;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+.up {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+    border-bottom: 1px solid black;
+}
+
+.author {
+    flex: 1.5;
+}
+
+.title {
+    flex: 2;
+}
+
+.code{
+    padding: 10px;
+    border-bottom: 1px solid black;
+    background-color: #000000;
+    color: white;
+}
+
+.details {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    border-bottom: 1px solid black;
+}
+
+
+.engagement, .specs {
+    display: flex;
+    align-items: center; 
+}
+
+.likes, .comments, .language, .format {
+    margin-right: 10px; 
+}
+
+.down{
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+}
+
+.input{
+    display: flex;
+    justify-content: space-between;
+}
+
+.result{
+    display: flex;
+    justify-content: space-between;
+}
+
+textarea{
+    width: 100%;
+    height: 100px;
+    padding: 10px ;
+    max-height: 2000px;
+    resize: vertical;  
+    outline: none;
+}
+
+.run{
+    margin: auto 0;
+}
+
+.run-button{
+    padding: 10px;
+    background-color: #000000;
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+}
+pre {
+    font-size: 0.7rem;
+    padding:5px;
+    margin: 0;
+  }
+  
+
+  .icon {
+    vertical-align: middle; 
+  }
+  
+
+  .likes, .comments{
+    cursor: pointer;
+  }
+
+.spidercat{
+    background-image: 
+    url("../assets/introduction.jpg");
+    color: aqua;
+}

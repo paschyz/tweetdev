@@ -1,0 +1,59 @@
+
+.homepage_container{
+    width: 65vw;
+}
+
+.homepage_container a{
+    text-decoration: none;
+    color: var(--accent-color);
+}
+
+.homepage_container a:hover{
+    color: var(--accent-color-hover);
+    text-decoration: underline;
+}
+
+.homepage_container > *{
+    margin-bottom: 3rem;
+}
+
+
+.homepage_introduction{
+    width: 100%;
+    height: 25rem;
+    border-radius: 10px;
+    position: relative;
+
+    background-image: 
+        linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0)), 
+        url("../assets/introduction.jpg");
+    background-size: cover;
+    background-position: 100% 20%;
+    
+}
+
+.homepage_introduction-child{
+    margin: 2rem;
+    position: absolute;
+    bottom: 0;
+}
+
+.homepage_introduction-child p {
+    font-size: medium;
+}
+
+.homepage_container h3{
+    margin-bottom: 1.5rem;
+}
+
+.homepage_popular-repairs-list{
+    justify-content: center;
+    display: flex;
+    flex-direction: row;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+.homepage_other-services{
+    font-size: medium;
+}

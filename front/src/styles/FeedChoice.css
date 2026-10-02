@@ -1,0 +1,19 @@
+.feed-choice-container{
+border: 1px solid black;
+border-radius: 10px;
+display: flex;
+justify-content: center;
+justify-content: space-around;
+}
+.recent{
+    background-color: aqua;
+    cursor: pointer;
+}
+.for-you-page{
+    cursor: pointer;
+    background-color: red;
+}
+
+.active{
+    background-color: green;
+}

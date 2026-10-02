@@ -1,0 +1,24 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es5",
+        "sourceMap": true,
+        "outDir": "public",
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "noEmitOnError": false,
+        "strict": false,
+        "noImplicitAny": false,
+        "noImplicitThis": false,
+        "strictNullChecks": false,
+        "strictFunctionTypes": false,
+        "strictPropertyInitialization": false,
+        "noUnusedLocals": false,
+        "noUnusedParameters": false,
+        "noImplicitReturns": false,
+        "noImplicitOverride": false,
+    },
+    "exclude": [
+        "node_modules"
+    ]
+}
